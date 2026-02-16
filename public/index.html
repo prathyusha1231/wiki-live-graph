@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wikipedia Live Graph</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <h1>Wikipedia Live Graph</h1>
+      <span id="live-clock">00:00:00 UTC</span>
+      <span id="event-ticker">Events: <span class="ticker-count" id="ticker-count">0</span></span>
+      <div id="view-controls">
+        <button class="view-btn active" data-view="bipartite">Bipartite</button>
+        <button class="view-btn" data-view="coedit">Co-Edit</button>
+        <button class="view-btn" data-view="wiki-domain">Wiki Domain</button>
+      </div>
+      <div id="connection-status">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting...</span>
+      </div>
+    </header>
+    <main id="main">
+      <div id="graph-container">
+        <div id="sigma-container"></div>
+        <div class="scanline-overlay"></div>
+        <div id="graph-overlay">
+          <div id="node-tooltip" class="hidden"></div>
+        </div>
+      </div>
+      <aside id="panel">
+        <section class="panel-section">
+          <h2>Live Feed</h2>
+          <div class="stat-row">
+            <span class="stat-label">Edits/sec</span>
+            <span class="stat-value" id="edits-per-sec">0</span>
+          </div>
+          <div class="sparkline-row">
+            <canvas id="sparkline-canvas"></canvas>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Total edits</span>
+            <span class="stat-value" id="total-edits">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Nodes</span>
+            <span class="stat-value" id="node-count">0</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Edges</span>
+            <span class="stat-value" id="edge-count">0</span>
+          </div>
+        </section>
+        <section class="ml-section" id="ml-insights">
+          <h2>ML Insights</h2>
+          <div class="ml-stat-row">
+            <span class="ml-label">Communities</span>
+            <span class="ml-value" id="ml-community-count">--</span>
+          </div>
+          <div class="ml-stat-row">
+            <span class="ml-label">Hub nodes</span>
+            <span class="ml-value" id="ml-hub-count">--</span>
+          </div>
+          <div style="margin-top:8px">
+            <span style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#888898">Top Hubs</span>
+            <ul id="ml-hub-list" class="ml-hub-list">
+              <li class="empty-state">Computing...</li>
+            </ul>
+          </div>
+          <div style="margin-top:8px">
+            <span style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#888898">Anomalies</span>
+            <ul id="ml-anomaly-list" class="ml-anomaly-list">
+              <li class="empty-state">None detected</li>
+            </ul>
+          </div>
+        </section>
+        <section class="panel-section">
+          <h2>Top Articles</h2>
+          <ol id="top-articles" class="ranked-list"></ol>
+        </section>
+        <section class="panel-section">
+          <h2>Top Editors</h2>
+          <ol id="top-editors" class="ranked-list"></ol>
+        </section>
+        <section class="panel-section">
+          <h2>Top Wikis</h2>
+          <ol id="top-wikis" class="ranked-list"></ol>
+        </section>
+        <section class="panel-section">
+          <h2>Burst Activity</h2>
+          <ul id="bursts" class="alert-list"></ul>
+        </section>
+        <section class="panel-section">
+          <h2>Edit War Alerts</h2>
+          <ul id="edit-wars" class="alert-list"></ul>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <!-- Graphology + Sigma from CDN (no build step) -->
+  <script src="https://cdn.jsdelivr.net/npm/graphology@0.25.4/dist/graphology.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sigma@2.4.0/build/sigma.min.js"></script>
+
+  <script src="js/panel.js"></script>
+  <script src="js/views.js"></script>
+  <script src="js/graph.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
