@@ -24,6 +24,12 @@ const Panel = {
       mlHubCount: document.getElementById("ml-hub-count"),
       mlHubList: document.getElementById("ml-hub-list"),
       mlAnomalyList: document.getElementById("ml-anomaly-list"),
+      mlModularity: document.getElementById("ml-modularity"),
+      mlCoverage: document.getElementById("ml-coverage"),
+      mlGini: document.getElementById("ml-gini"),
+      mlEntropy: document.getElementById("ml-entropy"),
+      mlTop10: document.getElementById("ml-top10"),
+      mlHubConcentration: document.getElementById("ml-hub-concentration"),
     };
 
     this._startClock();
@@ -227,6 +233,23 @@ const Panel = {
           const label = this._esc(info.details || id);
           return `<li><span class="anomaly-type">${this._esc(info.type)}</span><span class="anomaly-label">${label}</span></li>`;
         }).join("");
+      }
+    }
+
+    // Evaluation metrics
+    if (ml.evaluation) {
+      const ev = ml.evaluation;
+      if (ev.community) {
+        this.els.mlModularity.textContent = ev.community.modularity;
+        this.els.mlCoverage.textContent = (ev.community.coverage * 100).toFixed(1) + "%";
+      }
+      if (ev.pagerank) {
+        this.els.mlGini.textContent = ev.pagerank.gini;
+        this.els.mlEntropy.textContent = ev.pagerank.entropy;
+        this.els.mlTop10.textContent = (ev.pagerank.top10pct * 100).toFixed(1) + "%";
+      }
+      if (ev.hubs) {
+        this.els.mlHubConcentration.textContent = ev.hubs.hubConcentration;
       }
     }
   },

@@ -75,6 +75,33 @@
               <li class="empty-state">None detected</li>
             </ul>
           </div>
+          <div style="margin-top:10px;border-top:1px solid #2a2a3a;padding-top:8px">
+            <span style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#888898">Evaluation Metrics</span>
+            <div class="ml-stat-row" style="margin-top:4px">
+              <span class="ml-label" title="Newman-Girvan modularity. >0.3 = significant community structure">Modularity Q</span>
+              <span class="ml-value" id="ml-modularity">--</span>
+            </div>
+            <div class="ml-stat-row">
+              <span class="ml-label" title="Fraction of edges within communities">Coverage</span>
+              <span class="ml-value" id="ml-coverage">--</span>
+            </div>
+            <div class="ml-stat-row">
+              <span class="ml-label" title="Gini coefficient of PageRank. 0=equal, 1=concentrated">PR Gini</span>
+              <span class="ml-value" id="ml-gini">--</span>
+            </div>
+            <div class="ml-stat-row">
+              <span class="ml-label" title="Normalized Shannon entropy of PageRank. 1=uniform, 0=concentrated">PR Entropy</span>
+              <span class="ml-value" id="ml-entropy">--</span>
+            </div>
+            <div class="ml-stat-row">
+              <span class="ml-label" title="Fraction of total PageRank held by top 10% of nodes">Top 10% PR</span>
+              <span class="ml-value" id="ml-top10">--</span>
+            </div>
+            <div class="ml-stat-row">
+              <span class="ml-label" title="Top hub degree / total hub degrees. High = dominant hub">Hub Concentration</span>
+              <span class="ml-value" id="ml-hub-concentration">--</span>
+            </div>
+          </div>
         </section>
         <section class="panel-section">
           <h2>Top Articles</h2>

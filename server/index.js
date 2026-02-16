@@ -11,6 +11,57 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 app.use(express.static(path.join(__dirname, "..", "public")));
 
+// Debug endpoint to evaluate ML output
+app.get("/api/ml-eval", (req, res) => {
+  const ml = analytics.getMLData();
+  if (!ml) return res.json({ status: "not_computed_yet" });
+
+  // Community evaluation
+  const commValues = Object.values(ml.communities || {});
+  const commSizes = {};
+  for (const c of commValues) commSizes[c] = (commSizes[c] || 0) + 1;
+  const commSizeArr = Object.values(commSizes).sort((a, b) => b - a);
+
+  // PageRank evaluation
+  const prValues = Object.values(ml.pagerank || {});
+  const prSorted = [...prValues].sort((a, b) => b - a);
+
+  // Hub evaluation
+  const hubs = (ml.hubs || []).slice(0, 10);
+
+  // Anomaly evaluation
+  const anomalies = ml.anomalies || {};
+
+  // Graph stats
+  const nodeCount = store.nodes.size;
+  const edgeCount = store.edges.size;
+
+  res.json({
+    graphStats: { nodeCount, edgeCount },
+    communities: {
+      totalNodes: commValues.length,
+      uniqueCommunities: Object.keys(commSizes).length,
+      largestCommunities: commSizeArr.slice(0, 10),
+      singletons: commSizeArr.filter(s => s === 1).length,
+    },
+    pagerank: {
+      totalNodes: prValues.length,
+      top10scores: prSorted.slice(0, 10).map(v => +v.toFixed(4)),
+      mean: prValues.length ? +(prValues.reduce((a, b) => a + b, 0) / prValues.length).toFixed(4) : 0,
+      median: prValues.length ? +prSorted[Math.floor(prSorted.length / 2)].toFixed(4) : 0,
+    },
+    hubs: {
+      count: (ml.hubs || []).length,
+      top10: hubs.map(h => ({ label: h.label, degree: h.degree })),
+    },
+    anomalies: {
+      count: Object.keys(anomalies).length,
+      details: anomalies,
+    },
+    evaluation: ml.evaluation || null,
+  });
+});
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 

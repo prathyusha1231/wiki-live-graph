@@ -125,6 +125,9 @@ const GraphRenderer = {
 
     // Refresh animation frames
     this._animate();
+
+    // Reset camera to center on first snapshot load
+    this._needsCameraReset = true;
   },
 
   applyMLData(ml) {
@@ -169,6 +172,13 @@ const GraphRenderer = {
     for (const edge of data.edges) {
       if (!Views.shouldShowEdge(edge, view)) continue;
       this._addEdge(edge);
+    }
+
+    // Reset camera to center on first load
+    if (this._needsCameraReset && this.graph.order > 0) {
+      this._needsCameraReset = false;
+      const camera = this.renderer.getCamera();
+      camera.animate({ x: 0.5, y: 0.5, ratio: 1 }, { duration: 200 });
     }
   },
 
