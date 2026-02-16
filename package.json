@@ -4,7 +4,8 @@
   "description": "Real-time Wikipedia edit graph visualization",
   "main": "server/index.js",
   "scripts": {
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "start:ml": "cd ml && python server.py"
   },
   "dependencies": {
     "express": "^4.18.2",

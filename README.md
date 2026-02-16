@@ -1,8 +1,8 @@
 # Wikipedia Live Graph
 
-Real-time visualization of Wikipedia edits as an interactive force-directed graph, with Graph ML algorithms running server-side for community detection, influence ranking, hub identification, and anomaly detection.
+Real-time visualization of Wikipedia edits as an interactive force-directed graph, with **real ML algorithms** running on a Python backend using NetworkX and scikit-learn for community detection, influence ranking, hub identification, and anomaly detection.
 
-Built with Node.js, WebSockets, Sigma.js, and Graphology. No build step required.
+Built with Node.js, WebSockets, Sigma.js, Graphology, and a Python ML backend (Flask + NetworkX + scikit-learn).
 
 ---
 
@@ -10,7 +10,7 @@ Built with Node.js, WebSockets, Sigma.js, and Graphology. No build step required
 
 The app connects to the [Wikimedia EventStreams API](https://stream.wikimedia.org/v2/stream/recentchange) via Server-Sent Events (SSE) and processes every real-time edit happening across all Wikipedia languages. Each edit produces graph nodes (editors, articles, wikis) and edges (who edited what), which are broadcast to connected browsers via WebSocket and rendered as a live force-directed graph.
 
-On top of the live graph, four Graph ML algorithms run server-side every 10 seconds, coloring nodes by community, sizing them by influence, highlighting hubs, and flagging anomalous editing patterns.
+On top of the live graph, four ML algorithms run on a Python backend every 10 seconds, coloring nodes by community, sizing them by influence, highlighting hubs, and flagging anomalous editing patterns.
 
 ---
 
@@ -22,7 +22,11 @@ Wikimedia SSE  -->  [ingest.js]  -->  [graphStore.js]  -->  [index.js]  -->  Web
                      Filters noise     edges/metadata        diffs + ML         renders graph
                                              |
                                        [analytics.js]
-                                       Metrics + 4 ML algorithms
+                                       Metrics + HTTP POST
+                                             |
+                                       [ml/server.py]  (Flask)
+                                       NetworkX + scikit-learn
+                                       4 ML algorithms + evaluation
 ```
 
 ### Data Flow
@@ -39,83 +43,122 @@ Wikimedia SSE  -->  [ingest.js]  -->  [graphStore.js]  -->  [index.js]  -->  Web
 
    Stale nodes and edges are cleaned up every 30 seconds.
 
-3. **Analytics** (`server/analytics.js`): Computes rolling metrics (edits/sec, top articles, burst detection, edit wars) every 2 seconds, and runs 4 ML algorithms every 10 seconds.
+3. **Analytics** (`server/analytics.js`): Computes rolling metrics (edits/sec, top articles, burst detection, edit wars) every 2 seconds. Every 10 seconds, serializes the current graph and POSTs it to the Python ML server.
 
-4. **Server** (`server/index.js`): Express + WebSocket server. Sends graph snapshots on connect, then streams incremental diffs (node_add, node_update, edge_add, etc.). Metrics broadcast every 2s. ML results broadcast every 10s on a separate `ml_update` channel.
+4. **Python ML Server** (`ml/server.py`): Flask server running on port 5001. Receives graph snapshots via HTTP POST and runs 4 ML algorithms using real ML libraries:
+   - **Community Detection**: NetworkX Louvain algorithm (`louvain_communities()`)
+   - **PageRank**: NetworkX eigenvector-based PageRank (`nx.pagerank()`)
+   - **Hub Detection**: NetworkX degree centrality (`nx.degree_centrality()`)
+   - **Anomaly Detection**: scikit-learn IsolationForest (unsupervised ML)
 
-5. **Browser** (`public/`): Sigma.js renders the graph with force-directed layout. Panel shows live stats, sparkline, ML insights. Three view modes available.
+   Returns results + evaluation metrics in JSON.
+
+5. **Server** (`server/index.js`): Express + WebSocket server. Sends graph snapshots on connect, then streams incremental diffs (node_add, node_update, edge_add, etc.). Metrics broadcast every 2s. ML results broadcast every 10s on a separate `ml_update` channel.
+
+6. **Browser** (`public/`): Sigma.js renders the graph with force-directed layout. Panel shows live stats, sparkline, ML insights. Three view modes available.
 
 ---
 
 ## Graph ML Algorithms
 
-All four algorithms run server-side in `server/analytics.js`, cached and recomputed every 10 seconds. Computation is skipped entirely if the graph exceeds 1,500 nodes (performance guard).
+All four algorithms run on the Python backend (`ml/server.py`) using real ML libraries. Results are cached in Node.js and broadcast every 10 seconds. Computation is skipped entirely if the graph exceeds 1,500 nodes (performance guard).
 
-### 1. Community Detection (Label Propagation)
+### 1. Community Detection — NetworkX Louvain
 
 **What it does**: Groups nodes into communities — clusters of editors and articles that are closely connected through co-editing patterns.
 
 **How it works**:
-- Builds a weighted adjacency graph from all bipartite and co-edit edges
-- Each node starts with a unique label (its own community)
-- On each iteration, every node adopts the label that has the highest total weight among its neighbors
-- Nodes are processed in random order each iteration to avoid bias
-- Runs for up to 20 iterations, stops early if no labels change (convergence)
+- Builds a NetworkX `Graph` from bipartite and co-edit edges
+- Uses `networkx.algorithms.community.louvain_communities()` — the real Louvain algorithm with modularity optimization
+- Resolution parameter: 1.0 (standard)
+- Isolated nodes assigned to a catch-all community
 - Output: `{ nodeId: communityId }` mapping
 
-**Frontend effect**: Nodes are colored using an 8-color neon palette based on their community ID. Nodes in the same community get the same color, making editing clusters visually obvious.
+**Frontend effect**: Nodes are colored using an 8-color neon palette based on their community ID.
 
-**Why Label Propagation**: It requires no preset number of clusters (unlike k-means), runs in O(E x iterations) time which is fast enough for real-time, and naturally captures the weighted community structure of co-editing networks.
+**Why Louvain**: Produces higher-quality partitions than label propagation, with provable modularity optimization. NetworkX implementation handles weighted graphs natively.
 
-### 2. PageRank
+### 2. PageRank — NetworkX Eigenvector PageRank
 
-**What it does**: Ranks every node by its structural importance in the editing network. High PageRank = many well-connected editors are editing this article, or this editor contributes to many well-connected articles.
+**What it does**: Ranks every node by its structural importance in the editing network.
 
 **How it works**:
-- Builds a directed link graph from bipartite edges (editor <-> article)
-- Initializes all nodes with equal rank (1/N)
-- On each iteration, each node's rank = (1 - damping)/N + damping * sum(rank of each linker / their out-degree)
-- Damping factor: 0.85 (standard)
-- Runs for 20 iterations
-- Scores are normalized to 0-1 range (divided by the maximum PageRank)
+- Builds a directed graph from bipartite edges
+- Uses `networkx.pagerank(G, alpha=0.85)` — eigenvector-based, not manual loops
+- Max 100 iterations with convergence tolerance 1e-06
+- Scores normalized to 0-1 range
 - Output: `{ nodeId: score }` mapping
 
-**Frontend effect**: Node size is increased proportionally to PageRank score (up to +8px). Higher-ranked nodes appear visibly larger.
+**Frontend effect**: Node size is increased proportionally to PageRank score.
 
-### 3. Degree Centrality + Hub Detection
+### 3. Hub Detection — NetworkX Degree Centrality
 
-**What it does**: Identifies "hub" nodes — the most connected editors and articles in the bipartite graph.
-
-**How it works**:
-- Counts the degree (number of edges) of every node in the bipartite graph
-- Sorts all nodes by degree descending
-- The top 10% are classified as "hubs" (minimum 1 hub)
-- Also computes a normalized centrality score (degree / max_degree) for every node
-- Output: `hubs` array with `[{ id, label, degree }]`, plus `degreeCentrality` map
-
-**Frontend effect**: Hub nodes get a cyan border ring in the graph. The top 5 hubs are listed in the ML Insights panel with their degree count.
-
-### 4. Anomaly Detection
-
-**What it does**: Flags two types of suspicious editing patterns in real-time.
-
-**Type A — Prolific Editor**:
-- Triggers when a single editor has edited more than 10 distinct articles in the last 5 minutes
-- Anomaly score: `min(articleCount / 20, 1)`
-- This catches potential vandalism bots or mass-editing campaigns
-
-**Type B — Coordinated Editing**:
-- Triggers when a single article has been edited by more than 8 unique editors in the last 5 minutes
-- Anomaly score: `min(editorCount / 15, 1)`
-- This catches edit wars, viral events, or coordinated manipulation
+**What it does**: Identifies "hub" nodes — the most connected editors and articles.
 
 **How it works**:
-- Single O(E) pass over all recent bipartite edges
-- Indexes edges by source (editor -> article count) and target (article -> editor count)
-- Checks thresholds and builds anomaly objects
+- Uses `networkx.degree_centrality(G)` for normalized centrality scores
+- Top 10% by centrality are classified as hubs (minimum 1)
+- Output: `hubs` array with `[{ id, label, degree }]`
+
+**Frontend effect**: Hub nodes get a cyan border ring. Top 5 hubs listed in the ML Insights panel.
+
+### 4. Anomaly Detection — scikit-learn IsolationForest
+
+**What it does**: Detects outlier nodes using **real unsupervised machine learning**.
+
+**How it works**:
+- Extracts 4 features per node: edit count, degree, clustering coefficient, PageRank score
+- Uses `sklearn.ensemble.IsolationForest` — learns the normal distribution of node features and flags deviations
+- 100 estimators, contamination auto-tuned based on graph size
+- Decision function scores converted to 0-1 anomaly scores
+- Anomalies classified by node type: prolific editors, coordinated edits, or structural outliers
 - Output: `{ nodeId: { type, score, details } }` mapping
 
-**Frontend effect**: Anomalous nodes glow red with a pink border. Tooltip shows the anomaly type and details. Anomalies are listed in the ML Insights panel with a pulsing red glow animation.
+**Frontend effect**: Anomalous nodes glow red with a pink border.
+
+**Why IsolationForest**: It's genuine unsupervised ML — no manual thresholds. It learns what "normal" looks like from the data and automatically detects deviations, adapting as the graph evolves.
+
+---
+
+## Evaluation Metrics
+
+Every ML cycle (10s), evaluation metrics are computed in Python alongside the algorithms. These are displayed live in the ML Insights panel and available via the `/api/ml-eval` debug endpoint.
+
+### Community Detection Evaluation
+
+| Metric | Method | Range | What It Tells You |
+|--------|--------|-------|-------------------|
+| **Modularity Q** | `networkx.community.modularity()` | -0.5 to 1.0 | Standard measure of community partition quality. **Q > 0.3** = significant structure. |
+| **Coverage** | Intra-community edges / total edges | 0 to 1 | Fraction of edges within communities. |
+
+### PageRank Evaluation
+
+| Metric | Method | Range | What It Tells You |
+|--------|--------|-------|-------------------|
+| **Gini Coefficient** | NumPy vectorized computation | 0 to 1 | Inequality of influence distribution. |
+| **Normalized Shannon Entropy** | NumPy log2 computation | 0 to 1 | How spread out the PageRank distribution is. |
+| **Top 10% Concentration** | NumPy array slicing | 0 to 1 | How much influence the top-ranked nodes hold. |
+
+### Hub Detection Evaluation
+
+| Metric | What It Tells You |
+|--------|-------------------|
+| **Hub Concentration** | Whether one hub dominates or hubs are evenly distributed. |
+
+### Anomaly Detection Evaluation
+
+| Metric | What It Tells You |
+|--------|-------------------|
+| **Total Count** | Number of IsolationForest outliers |
+| **Avg Score** | Mean anomaly score (from decision function) |
+| **Prolific Editors** | Outlier editors |
+| **Coordinated Edits** | Outlier articles |
+
+### API Access
+
+Evaluation metrics are available at:
+- **Live panel**: ML Insights section in the sidebar
+- **JSON endpoint**: `GET /api/ml-eval` returns all metrics with raw algorithm output
 
 ---
 
@@ -138,38 +181,31 @@ Switching views sends a `set_view` message to the server, which responds with a 
 The frontend is styled as a cinematic "command center" dashboard:
 
 ### CSS Effects
-- **Scanline overlay**: Animated horizontal lines scrolling over the graph canvas, simulating a CRT monitor effect. Uses `repeating-linear-gradient` with a slow 8-second scroll animation.
-- **Vignette**: `inset box-shadow` on the graph container darkens the edges, drawing focus to the center.
-- **Pulsing radial background**: The graph container's radial gradient intensity is driven by a `--pulse-intensity` CSS variable, updated from the current edits/sec rate. More edits = brighter glow.
-- **Monospace numbers**: All statistics use `Consolas / SF Mono / Fira Code` for that data-terminal aesthetic.
-- **Breathing status dot**: The "Live" connection indicator uses a `status-breathe` keyframe animation that pulses the green glow.
+- **Scanline overlay**: Animated horizontal lines scrolling over the graph canvas, simulating a CRT monitor effect.
+- **Vignette**: `inset box-shadow` on the graph container darkens the edges.
+- **Pulsing radial background**: Intensity driven by current edits/sec rate.
+- **Monospace numbers**: All statistics use `Consolas / SF Mono / Fira Code`.
+- **Breathing status dot**: The "Live" indicator uses a pulse animation.
 
 ### Live Dashboard Elements
-- **UTC clock**: Ticks every second in the header, monospace formatted.
-- **Event ticker**: Running count of total events processed, displayed in the header.
-- **Sparkline chart**: Canvas-drawn edits/sec history (last 60 data points) with a cyan gradient fill. Updates every 2 seconds. Uses `ResizeObserver` to stay sharp on resize.
-- **Rolling counter animations**: Stat values animate with a `translateY` slide-up transition when they change, instead of just swapping text.
-- **ML Insights panel**: Dedicated section showing community count, hub node list (top 5 with degree), and active anomaly alerts with pulsing red glow.
+- **UTC clock**: Ticks every second in the header.
+- **Event ticker**: Running count of total events processed.
+- **Sparkline chart**: Canvas-drawn edits/sec history with cyan gradient fill.
+- **Rolling counter animations**: Values animate with slide-up transition.
+- **ML Insights panel**: Community count, hub list, anomaly alerts.
 
 ### Tooltip
-Hovering a node shows an enhanced tooltip with:
-- Node label, type, and edit count
-- Community ID with a colored dot matching the node's community color
-- PageRank score (0-1, three decimal places)
-- Anomaly alert (type + details) if flagged
+Hovering a node shows: label, type, edit count, community ID, PageRank score, and anomaly alert if flagged.
 
 ---
 
 ## Performance Considerations
 
 - **ML computation guard**: All 4 algorithms are skipped if the graph exceeds 1,500 nodes
-- **Separate broadcast intervals**: Metrics update every 2s (lightweight JSON). ML data updates every 10s (heavier payload). This prevents sending redundant ML data 5x more often than it changes.
-- **Anomaly detection in O(E)**: Single pass over edges with pre-indexed maps, instead of nested loops
+- **Separate broadcast intervals**: Metrics update every 2s. ML data updates every 10s.
+- **Python ML server**: Runs in a separate process, doesn't block Node.js event loop
 - **Layout cap**: Force-directed layout skips computation when node count exceeds 2,000
-- **Repulsion subset**: Only the first 500 nodes participate in repulsion calculations to keep O(N^2) bounded
-- **ML recolor throttle**: `applyMLData()` defers the full graph recolor to `requestAnimationFrame` and deduplicates concurrent calls
-- **Sparkline canvas resize**: Uses `ResizeObserver` instead of polling, only resizes when dimensions actually change
-- **10-minute sliding window**: Old nodes and edges are cleaned up every 30s, keeping the graph bounded
+- **10-minute sliding window**: Old nodes and edges are cleaned up every 30s
 
 ---
 
@@ -181,7 +217,10 @@ wiki-live-graph/
     index.js          Express + WebSocket server, broadcast logic
     ingest.js         Wikimedia SSE stream consumer
     graphStore.js     In-memory graph with sliding window cleanup
-    analytics.js      Metrics computation + 4 ML algorithms + caching
+    analytics.js      Metrics + HTTP POST to Python ML server
+  ml/
+    server.py         Flask server with NetworkX + scikit-learn ML
+    requirements.txt  Python dependencies
   public/
     index.html        Main page with graph, panel, overlays
     css/
@@ -198,12 +237,29 @@ wiki-live-graph/
 
 ## Setup
 
+### Prerequisites
+- Node.js (v18+)
+- Python 3.9+
+
+### Install & Run
+
 ```bash
+# Install Node.js dependencies
 npm install
+
+# Install Python ML dependencies
+cd ml && pip install -r requirements.txt && cd ..
+
+# Terminal 1: Start Python ML server
+npm run start:ml
+
+# Terminal 2: Start Node.js server
 npm start
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+The Python ML server runs on port 5001. The Node.js server POSTs graph snapshots to it every 10 seconds and broadcasts the ML results to all connected browsers.
 
 No build tools, no bundler, no framework. The frontend loads Graphology and Sigma.js from CDN.
 
@@ -211,11 +267,23 @@ No build tools, no bundler, no framework. The frontend loads Graphology and Sigm
 
 ## Dependencies
 
+### Node.js
+
 | Package | Purpose |
 |---------|---------|
 | `express` | Static file serving + HTTP server |
 | `ws` | WebSocket server for real-time browser updates |
 | `eventsource` | SSE client for Wikimedia EventStreams |
+
+### Python ML Backend
+
+| Package | Purpose |
+|---------|---------|
+| `flask` | HTTP server for ML endpoint |
+| `flask-cors` | CORS support for cross-origin requests |
+| `networkx` | Graph algorithms (Louvain, PageRank, degree centrality) |
+| `scikit-learn` | IsolationForest anomaly detection (real unsupervised ML) |
+| `numpy` | Numerical computation for evaluation metrics |
 
 Frontend dependencies (loaded via CDN, no install needed):
 - `graphology@0.25.4` — Graph data structure
@@ -229,8 +297,9 @@ Frontend dependencies (loaded via CDN, no install needed):
 2. `graphStore.js` creates/updates nodes and edges, returns a diff
 3. `index.js` broadcasts the diff to all connected WebSocket clients (filtered by their active view)
 4. Every 2 seconds, `analytics.js` computes metrics and `index.js` broadcasts them
-5. Every 10 seconds, `analytics.js` runs all 4 ML algorithms and `index.js` broadcasts the results as a separate `ml_update` message
-6. On the browser, `app.js` routes incoming messages to `Panel` (stats/ML panel), `Views` (coloring/sizing config), and `GraphRenderer` (Sigma.js)
-7. `graph.js` applies ML data to node colors (community), sizes (PageRank), borders (hubs), and glow (anomalies) via `nodeReducer` and `edgeReducer`
-8. The force-directed layout continuously positions nodes at 20 FPS
-9. Pulse animations highlight newly updated nodes for 600ms
+5. Every 10 seconds, `analytics.js` serializes the graph and POSTs to `ml/server.py`
+6. Python runs Louvain (NetworkX), PageRank (NetworkX), hub detection (NetworkX), and IsolationForest (scikit-learn)
+7. Results are returned as JSON, cached in Node.js, and broadcast as `ml_update`
+8. On the browser, `app.js` routes incoming messages to `Panel`, `Views`, and `GraphRenderer`
+9. `graph.js` applies ML data to node colors (community), sizes (PageRank), borders (hubs), and glow (anomalies)
+10. The force-directed layout continuously positions nodes at 20 FPS
