@@ -297,6 +297,7 @@ const GraphRenderer = {
   _startLayout() {
     const REPULSION = 0.8;
     const ATTRACTION = 0.0005;
+    const COMMUNITY_ATTRACTION = 0.003;
     const DAMPING = 0.9;
     const MAX_DISP = 0.1;
 
@@ -326,6 +327,7 @@ const GraphRenderer = {
       }
 
       // Repulsion between all node pairs (limit to 500 nodes for perf)
+      const communities = this.mlData?.communities || null;
       const subset = nodes.length > 500 ? nodes.slice(0, 500) : nodes;
       for (let i = 0; i < subset.length; i++) {
         for (let j = i + 1; j < subset.length; j++) {
@@ -341,6 +343,17 @@ const GraphRenderer = {
           velocities.get(a).vy += fy;
           velocities.get(b).vx -= fx;
           velocities.get(b).vy -= fy;
+
+          // Community attraction: pull same-community nodes together
+          if (communities && communities[a] != null && communities[a] === communities[b]) {
+            const cForce = dist * COMMUNITY_ATTRACTION;
+            const cfx = (dx / dist) * cForce;
+            const cfy = (dy / dist) * cForce;
+            velocities.get(a).vx -= cfx;
+            velocities.get(a).vy -= cfy;
+            velocities.get(b).vx += cfx;
+            velocities.get(b).vy += cfy;
+          }
         }
       }
 
